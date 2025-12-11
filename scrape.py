@@ -584,7 +584,11 @@ def generate_username_variants(supervisor_name):
     """Generate possible Mattermost username variants from a supervisor name.
     
     Args:
-        supervisor_name: Name in format "Lastname, Firstname" or "Lastname"
+        supervisor_name: Name in any format:
+            - "Lastname, Firstname" (standard academic format)
+            - "Firstname, Lastname" (reversed with comma)
+            - "Firstname Lastname" (natural order)
+            - "Lastname" (single name)
     
     Returns:
         List of username variants to try (in order of likelihood)
@@ -593,10 +597,59 @@ def generate_username_variants(supervisor_name):
     
     variants = []
     
-    # Parse the name
-    parts = supervisor_name.split(',')
-    lastname = parts[0].strip()
-    firstname = parts[1].strip() if len(parts) > 1 else ""
+    # Parse the name - handle multiple formats
+    if ',' in supervisor_name:
+        # Format with comma: could be "Lastname, Firstname" or "Firstname, Lastname"
+        parts = supervisor_name.split(',')
+        part1 = parts[0].strip()
+        part2 = parts[1].strip() if len(parts) > 1 else ""
+        
+        # Heuristic: If part1 looks like a firstname (common first names, or shorter),
+        # treat it as "Firstname, Lastname", otherwise "Lastname, Firstname"
+        # Common academic titles that suggest lastname comes first
+        academic_indicators = ['prof', 'dr', 'professor', 'doktor']
+        has_title = any(indicator in part1.lower() for indicator in academic_indicators)
+        
+        # Check if part2 contains spaces (suggesting it might be a compound lastname)
+        part2_has_spaces = ' ' in part2
+        
+        # If part1 is much longer than part2 and part2 doesn't have spaces,
+        # it's likely "Lastname, Firstname" (traditional academic format)
+        if (len(part1) > len(part2) * 1.5 and not part2_has_spaces) or has_title:
+            # Traditional format: "Lastname, Firstname"
+            lastname = part1
+            firstname = part2
+        else:
+            # Could be reversed: "Firstname, Lastname"
+            # Try both interpretations
+            # First, assume it's reversed
+            firstname_option1 = part1
+            lastname_option1 = part2
+            # Second, assume it's traditional
+            firstname_option2 = part2
+            lastname_option2 = part1
+            
+            # We'll generate variants for both interpretations
+            # The traditional format is still more common, so we'll prioritize it
+            firstname = part2  # traditional
+            lastname = part1   # traditional
+            firstname_alt = part1  # reversed
+            lastname_alt = part2   # reversed
+    else:
+        # Format without comma: "Firstname Lastname" or just "Lastname"
+        parts = supervisor_name.strip().split()
+        if len(parts) >= 2:
+            # Assume last part is lastname, everything else is firstname
+            firstname = ' '.join(parts[:-1])
+            lastname = parts[-1]
+            firstname_alt = None
+            lastname_alt = None
+        else:
+            # Just one name, assume it's the lastname
+            lastname = parts[0] if parts else supervisor_name.strip()
+            firstname = ""
+            firstname_alt = None
+            lastname_alt = None
     
     # Remove umlauts and special characters
     def normalize(text):
@@ -632,6 +685,24 @@ def generate_username_variants(supervisor_name):
         if firstname_normalized:
             variants.append(firstname_normalized[0] + lastname_no_hyphen)
         variants.append(lastname_no_hyphen)
+    
+    # Pattern 5: If we have alternate interpretation (reversed format), try those too
+    if 'firstname_alt' in locals() and firstname_alt and lastname_alt:
+        lastname_alt_normalized = normalize(lastname_alt)
+        firstname_alt_normalized = normalize(firstname_alt) if firstname_alt else ""
+        
+        if firstname_alt_normalized:
+            variants.append(firstname_alt_normalized[0] + lastname_alt_normalized)
+        variants.append(lastname_alt_normalized)
+        if firstname_alt_normalized:
+            variants.append(firstname_alt_normalized + lastname_alt_normalized)
+        
+        # With hyphenated names (alt version)
+        if '-' in lastname_alt_normalized:
+            lastname_alt_no_hyphen = lastname_alt_normalized.replace('-', '')
+            if firstname_alt_normalized:
+                variants.append(firstname_alt_normalized[0] + lastname_alt_no_hyphen)
+            variants.append(lastname_alt_no_hyphen)
     
     # Remove duplicates while preserving order
     seen = set()
@@ -835,7 +906,7 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
         message += f"**Type**: {submission['thesis_type']}\n\n"
         message += f"Can this be uploaded to publish with open access rights?\n"
         message += f"If this isn't possible, please contact the author directly to clarify.\n\n"
-        message += f"Cheers,\nETPApprover Bot"
+        message += f"Cheers,\nETPApprover Bot for the Webbadmin"
         
         # Interactive mode - show preview and ask for confirmation
         if interactive:
@@ -888,7 +959,7 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
             author_message += f"We would like to confirm: Do you give permission to publish this thesis with **open access rights**? "
             author_message += f"This means your thesis will be publicly accessible online.\n\n"
             author_message += f"Please reply with your confirmation.\n\n"
-            author_message += f"Cheers,\nETPApprover Bot"
+            author_message += f"Cheers,\nETPApprover Bot for the Webbadmin"
             
             print(f"Author recipients: {', '.join(author_recipients)}")
             

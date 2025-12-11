@@ -39,6 +39,9 @@ ENV/
 # Credentials - NEVER commit this!
 credentials.json
 
+# Runtime tracking data
+processed_submissions.json
+
 # Backup files
 *.backup
 *.bak

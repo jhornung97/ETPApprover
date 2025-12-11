@@ -6,9 +6,11 @@ Automated system for monitoring thesis submissions and notifying supervisors via
 
 - **Automated Thesis Scraping**: Monitors pending Bachelor thesis submissions from publish.etp.kit.edu
 - **Smart Username Detection**: Automatically generates and verifies Mattermost usernames from supervisor names
+- **Duplicate Prevention**: Tracks processed submissions to avoid sending duplicate notifications
 - **Multi-Channel Notifications**: 
   - Email notifications to webadmin
   - Mattermost group DMs to supervisors (Bachelor theses and Master theses only)
+  - Permission requests to thesis authors
 - **Cronjob Ready**: Captures execution logs and attaches them to notification emails
 - **Error Handling**: Validates usernames before sending, with clear error messages
 - **Interactive Testing**: Built-in tools for testing Mattermost messaging and username lookup
@@ -64,7 +66,18 @@ python3 scrape.py --mode test
 python3 scrape.py --mode scraper --log
 ```
 
-### 4. Set Up Cronjob
+### 4. Mark Existing Submissions (Important!)
+
+**Before setting up the cronjob**, mark all currently pending submissions as already processed to avoid duplicate notifications:
+
+```bash
+# Mark all current pending submissions as processed
+python3 mark_current_as_processed.py
+```
+
+This ensures that when the cronjob runs, it will only notify about **new** submissions.
+
+### 5. Set Up Cronjob
 
 ```bash
 # Edit crontab
@@ -203,24 +216,72 @@ python3 scrape.py --mode test
 # Choose Option 4: Test username lookup
 ```
 
+## 📊 Managing Processed Submissions
+
+The system tracks which submissions have been processed to prevent duplicate notifications. You can manage this tracking data:
+
+### View and Manage Tracking
+
+```bash
+# View and manage processed submissions
+python3 manage_tracking.py
+```
+
+**Available options:**
+1. **List all processed submissions** - View complete history
+2. **Show statistics** - See counts by date, most recent, etc.
+3. **Remove specific submission** - Remove by record ID
+4. **Clear all** - Reset tracking (use with caution!)
+
+### Mark Current Submissions as Processed
+
+When setting up the system or after manually processing submissions, you can mark all currently pending submissions as already processed:
+
+```bash
+# Mark all current pending submissions as processed (no notifications sent)
+python3 mark_current_as_processed.py
+```
+
+This is useful for:
+- **Initial setup**: Avoid sending notifications for old submissions
+- **After manual processing**: Mark submissions you've already handled
+- **Fresh start**: When you want the cronjob to only notify about new submissions
+
+**What it does:**
+1. ✅ Fetches all currently pending submissions from repository
+2. ✅ Adds them to `processed_submissions.json`
+3. ✅ Does NOT send any notifications
+4. ✅ Shows summary of what was added
+
+**Tracking file**: `processed_submissions.json` (automatically managed)
+
+**When to use:**
+- **Before first cronjob run**: Mark existing submissions to avoid duplicate notifications
+- **Testing**: Clear tracking, test, then re-mark to avoid repeat notifications
+- **After approval**: Submissions can be cleared once approved in repository
+- **Fresh start**: Clear at semester boundaries if desired
+
 ## 🏗️ Project Structure
 
 ```
 etapprover/
-├── README.md                    # This file
-├── requirements.txt             # Python dependencies
-├── credentials.json.example     # Template for credentials
-├── credentials.json             # Your credentials (gitignored)
-├── scrape.py                    # Main scraper script
-├── test.py                      # Standalone Mattermost test tool
-├── docs/                        # Documentation
-│   ├── CRONJOB_SETUP.md        # Cronjob configuration guide
-│   ├── USERNAME_LOOKUP.md      # Username detection docs
-│   └── ARCHITECTURE.md         # Technical architecture
-├── tests/                       # Test scripts
-│   ├── test_username_error.py  # Username error handling tests
-│   └── test_log_capture.py     # Log capture tests
-└── .gitignore                   # Git ignore rules
+├── README.md                         # This file
+├── requirements.txt                  # Python dependencies
+├── credentials.json.example          # Template for credentials
+├── credentials.json                  # Your credentials (gitignored)
+├── scrape.py                         # Main scraper script
+├── test.py                           # Standalone Mattermost test tool
+├── manage_tracking.py                # Processed submissions management tool
+├── mark_current_as_processed.py      # Mark current pending submissions as processed
+├── processed_submissions.json        # Tracking file (auto-generated, gitignored)
+├── docs/                             # Documentation
+│   ├── CRONJOB_SETUP.md             # Cronjob configuration guide
+│   ├── USERNAME_LOOKUP.md           # Username detection docs
+│   └── ARCHITECTURE.md              # Technical architecture
+├── tests/                            # Test scripts
+│   ├── test_username_error.py       # Username error handling tests
+│   └── test_log_capture.py          # Log capture tests
+└── .gitignore                        # Git ignore rules
 ```
 
 ## 🔒 Security

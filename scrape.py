@@ -42,6 +42,57 @@ class TeeOutput:
         return self.buffer.getvalue()
 
 # ============================================================================
+# Submission Tracking Functions
+# ============================================================================
+
+def load_processed_submissions():
+    """Load the list of already processed submissions."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    tracking_file = os.path.join(script_dir, 'processed_submissions.json')
+    
+    if not os.path.exists(tracking_file):
+        return {"processed": []}
+    
+    try:
+        with open(tracking_file, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {"processed": []}
+
+def save_processed_submissions(tracking_data):
+    """Save the list of processed submissions."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    tracking_file = os.path.join(script_dir, 'processed_submissions.json')
+    
+    try:
+        with open(tracking_file, 'w') as f:
+            json.dump(tracking_data, f, indent=2)
+    except Exception as e:
+        print(f"⚠️  Warning: Could not save tracking data: {e}")
+
+def is_submission_processed(record_id, author, tracking_data):
+    """Check if a submission has already been processed."""
+    for entry in tracking_data.get('processed', []):
+        if entry.get('record_id') == record_id and entry.get('author') == author:
+            return True
+    return False
+
+def mark_submission_processed(record_id, author, title, tracking_data):
+    """Mark a submission as processed."""
+    entry = {
+        'record_id': record_id,
+        'author': author,
+        'title': title,
+        'processed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    
+    if 'processed' not in tracking_data:
+        tracking_data['processed'] = []
+    
+    tracking_data['processed'].append(entry)
+    return tracking_data
+
+# ============================================================================
 # Credential Management
 # ============================================================================
 
@@ -175,6 +226,7 @@ def process_all_submissions(session, api_url):
         print("\n⚠ No pending submissions found!")
         return []
     
+    tracking_data = load_processed_submissions()
     results = []
     for i, submission in enumerate(submissions, 1):
         print(f"\n{'='*60}")
@@ -182,6 +234,10 @@ def process_all_submissions(session, api_url):
         print(f"{'='*60}")
         
         data = extract_submission_data(submission)
+        
+        if is_submission_processed(data['record_id'], data['author'], tracking_data):
+            print(f"⏭ Skipping already processed submission: {data['title']}")
+            continue
         
         print(f"  Record ID: {data['record_id']}")
         print(f"  Title: {data['title']}")
@@ -191,7 +247,9 @@ def process_all_submissions(session, api_url):
         print(f"  Approval: {data['approval_status']}")
         
         results.append(data)
+        tracking_data = mark_submission_processed(data['record_id'], data['author'], data['title'], tracking_data)
     
+    save_processed_submissions(tracking_data)
     return results
 
 # ============================================================================
@@ -840,6 +898,9 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
     api_url = mattermost_config['api_url']
     token = mattermost_config['token']
     
+    # Load tracking data to check for already processed submissions
+    tracking_data = load_processed_submissions()
+    
     # Test connection
     success, bot_user = test_mattermost_connection(api_url, token)
     if not success:
@@ -857,6 +918,11 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
     
     for submission in submissions:
         print(f"\n--- Processing: {submission['title'][:50]}... ---")
+        
+        # Check if this submission has already been processed
+        if is_submission_processed(submission['record_id'], submission['author'], tracking_data):
+            print(f"⏭ Skipping - already processed (notifications already sent)")
+            continue
         
         # Check if this is a Bachelor Thesis
         thesis_type = submission['thesis_type'].lower()
@@ -1011,6 +1077,16 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
         else:
             print(f"⚠️  Could not find Mattermost username for author: {submission['author']}")
             print(f"    Skipping author permission request.")
+        
+        # Mark this submission as processed
+        print(f"\n✓ Marking submission as processed...")
+        tracking_data = mark_submission_processed(
+            submission['record_id'],
+            submission['author'],
+            submission['title'],
+            tracking_data
+        )
+        save_processed_submissions(tracking_data)
     
     return True
 

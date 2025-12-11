@@ -905,7 +905,8 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
         message += f"**Author**: {submission['author']}\n"
         message += f"**Type**: {submission['thesis_type']}\n\n"
         message += f"Can this be uploaded to publish with open access rights?\n"
-        message += f"If this isn't possible, please contact the author directly to clarify.\n\n"
+        message += f"If this isn't possible, please contact the author directly to clarify.\n"
+        message += f"Also, if some supervisors are missing from this notification, please inform @{recipients[0]}.\n\n"
         message += f"Cheers,\nETPApprover Bot for the Webbadmin"
         
         # Interactive mode - show preview and ask for confirmation
@@ -953,8 +954,17 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
             # Remove duplicates (in case author is already jhornung)
             author_recipients = list(set(author_recipients))
             
+            # Extract first name for more personal greeting
+            author_parts = submission['author'].split(',')
+            if len(author_parts) == 2:
+                # Format is "Lastname, Firstname" - use firstname
+                author_firstname = author_parts[1].strip().split()[0]  # Get first part of firstname
+            else:
+                # Fallback to full display name
+                author_firstname = author_display.split()[0]
+            
             # Format author's permission request message
-            author_message = f"Hi {author_display},\n\n"
+            author_message = f"Hi {author_firstname},\n\n"
             author_message += f"Your thesis **\"{submission['title']}\"** has been submitted to our repository. Congratulations for handing in :partyparrot:\n\n"
             author_message += f"We would like to confirm: Do you give permission to publish this thesis with **open access rights**? "
             author_message += f"This means your thesis will be publicly accessible online.\n\n"
@@ -1046,11 +1056,21 @@ def run_scraper(capture_log=False, interactive=False):
         print(f"✓ Processed {len(results)} submissions")
         print(f"{'='*60}")
         
-        # Get log content before sending email
-        log_content = tee.getvalue() if tee else None
-        
         if results:
-            # Send email notification with log
+            # Send Mattermost notifications first (before capturing log)
+            if 'mattermost' in creds:
+                mattermost_config = {
+                    'api_url': creds['mattermost']['api_url'],
+                    'token': creds['mattermost']['token']
+                }
+                send_mattermost_notifications(results, mattermost_config, interactive=interactive)
+            else:
+                print("\n⚠ Mattermost credentials not found, skipping Mattermost notifications")
+            
+            # Now capture log content AFTER all output is complete
+            log_content = tee.getvalue() if tee else None
+            
+            # Send email notification with complete log
             smtp_config = {
                 'smtp_server': 'localhost',
                 'smtp_port': 25,
@@ -1078,20 +1098,21 @@ def run_scraper(capture_log=False, interactive=False):
                     print("❌ Email notification skipped")
             else:
                 send_notification_email(results, smtp_config, log_content)
-            
-            # Send Mattermost notifications
-            if 'mattermost' in creds:
-                mattermost_config = {
-                    'api_url': creds['mattermost']['api_url'],
-                    'token': creds['mattermost']['token']
-                }
-                send_mattermost_notifications(results, mattermost_config, interactive=interactive)
-            else:
-                print("\n⚠ Mattermost credentials not found, skipping Mattermost notifications")
         else:
             print("\n✓ No pending submissions found")
-            # Still send email with log if there were no submissions
-            if capture_log and log_content:
+        
+        # Print completion time and duration
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        print(f"\n{'='*60}")
+        print(f"Execution completed: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Total duration: {duration:.2f} seconds")
+        print(f"{'='*60}")
+        
+        # Send status email with log if there were no submissions
+        if not results and capture_log:
+            log_content = tee.getvalue() if tee else None
+            if log_content:
                 smtp_config = {
                     'smtp_server': 'localhost',
                     'smtp_port': 25,
@@ -1120,13 +1141,6 @@ def run_scraper(capture_log=False, interactive=False):
                     print("✓ Status email with log sent")
                 except Exception as e:
                     print(f"✗ Failed to send status email: {e}")
-        
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
-        print(f"\n{'='*60}")
-        print(f"Execution completed: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Total duration: {duration:.2f} seconds")
-        print(f"{'='*60}")
         
         return results
         

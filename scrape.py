@@ -21,6 +21,13 @@ from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ============================================================================
+# Configuration
+# ============================================================================
+
+# Webadmin username for Mattermost notifications
+WEBADMIN_USERNAME = 'jhornung'
+
+# ============================================================================
 # Logging System
 # ============================================================================
 
@@ -226,7 +233,6 @@ def process_all_submissions(session, api_url):
         print("\n⚠ No pending submissions found!")
         return []
     
-    tracking_data = load_processed_submissions()
     results = []
     for i, submission in enumerate(submissions, 1):
         print(f"\n{'='*60}")
@@ -234,10 +240,6 @@ def process_all_submissions(session, api_url):
         print(f"{'='*60}")
         
         data = extract_submission_data(submission)
-        
-        if is_submission_processed(data['record_id'], data['author'], tracking_data):
-            print(f"⏭ Skipping already processed submission: {data['title']}")
-            continue
         
         print(f"  Record ID: {data['record_id']}")
         print(f"  Title: {data['title']}")
@@ -247,9 +249,7 @@ def process_all_submissions(session, api_url):
         print(f"  Approval: {data['approval_status']}")
         
         results.append(data)
-        tracking_data = mark_submission_processed(data['record_id'], data['author'], data['title'], tracking_data)
     
-    save_processed_submissions(tracking_data)
     return results
 
 # ============================================================================
@@ -786,11 +786,12 @@ def extract_supervisor_usernames(supervisors, mattermost_config=None):
     
     # Manual override mapping (for special cases)
     manual_overrides = {
-        'hornung': 'jhornung',
+        'hornung': WEBADMIN_USERNAME,
         'gaisdörfer': 'mgais',
         'gaisdorfer': 'mgais',
         'gaisdoerfer': 'mgais',
-        'quiroga-trivino': 'aquiroga'
+        'quiroga-trivino': 'aquiroga',
+        'van tonder': 'rvantond'
     }
     
     for supervisor in supervisors:
@@ -936,7 +937,7 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
         print(f"✓ Bachelor thesis detected, preparing notification...")
         
         # Prepare notification recipients (supervisors + webadmin only)
-        recipients = ['jhornung']  # Always notify webadmin
+        recipients = [WEBADMIN_USERNAME]  # Always notify webadmin
         
         # Add supervisors if available
         if submission['supervisors']:
@@ -972,7 +973,7 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
         message += f"**Type**: {submission['thesis_type']}\n\n"
         message += f"Can this be uploaded to publish with open access rights?\n"
         message += f"If this isn't possible, please contact the author directly to clarify.\n"
-        message += f"Also, if some supervisors are missing from this notification, please inform @{recipients[0]}.\n\n"
+        message += f"Also, if some supervisors are missing from this notification, please inform @{WEBADMIN_USERNAME}.\n\n"
         message += f"Cheers,\nETPApprover Bot for the Webbadmin"
         
         # Interactive mode - show preview and ask for confirmation
@@ -1015,7 +1016,7 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
         
         if author_username:
             # Create group DM with author and jhornung
-            author_recipients = ['jhornung', author_username]
+            author_recipients = [WEBADMIN_USERNAME, author_username]
             
             # Remove duplicates (in case author is already jhornung)
             author_recipients = list(set(author_recipients))
@@ -1067,7 +1068,7 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
             else:
                 # Author is jhornung, just send a note
                 print(f"Author is jhornung, sending self-notification...")
-                author_success = send_dm_to_user(api_url, token, bot_id, 'jhornung', 
+                author_success = send_dm_to_user(api_url, token, bot_id, WEBADMIN_USERNAME, 
                     f"Note: You are the author of \"{submission['title']}\" - permission request skipped.")
             
             if author_success:

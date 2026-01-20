@@ -786,12 +786,13 @@ def extract_supervisor_usernames(supervisors, mattermost_config=None):
     
     # Manual override mapping (for special cases)
     manual_overrides = {
-        'hornung': WEBADMIN_USERNAME,
         'gaisdörfer': 'mgais',
         'gaisdorfer': 'mgais',
         'gaisdoerfer': 'mgais',
         'quiroga-trivino': 'aquiroga',
-        'van tonder': 'rvantond'
+        'van tonder': 'rvantond',
+        'kieseler': 'jkiesele',
+        'de pietro': 'gdepietro'
     }
     
     for supervisor in supervisors:
@@ -800,6 +801,13 @@ def extract_supervisor_usernames(supervisors, mattermost_config=None):
             continue
         
         print(f"  🔍 Processing supervisor: {supervisor}")
+        
+        # Flattened academic title stripping
+        academic_titles = [
+            "Prof. Dr.", "Prof Dr", "Prof.", "Priv. Doz.", "Priv. D", "Dr."
+        ]
+        for title in academic_titles:
+            supervisor = supervisor.replace(title, "").strip()
         
         # Check manual overrides first
         lastname_lower = supervisor.lower().split(',')[0].strip()

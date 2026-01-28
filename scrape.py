@@ -1138,9 +1138,12 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
             
             if processed_date is not None:
                 print(f"✓ Found processed date for submission: {processed_date.date()}")
-                days_since_processed = (datetime.now() - processed_date).days
+                days_since_processed = (datetime.now().date() - processed_date.date()).days
                 print(f"  Days since last reminder: {days_since_processed} days")
-                if days_since_processed % 14 == 0:
+                if days_since_processed == 0:
+                    print(f"⏭ No reminder needed today (just processed)")
+                if days_since_processed % 14 == 0 and days_since_processed != 0:
+                    print(f"⏰ Time to send a reminder notification to supervisors...")
                     if submission['supervisors']:
                         try:
                             supervisor_usernames = extract_supervisor_usernames(

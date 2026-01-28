@@ -77,20 +77,21 @@ def save_processed_submissions(tracking_data):
     except Exception as e:
         print(f"⚠️  Warning: Could not save tracking data: {e}")
 
-def is_submission_processed(record_id, author, tracking_data):
+def is_submission_processed(record_id, author, tracking_data, message_type):
     """Check if a submission has already been processed."""
     for entry in tracking_data.get('processed', []):
-        if entry.get('record_id') == record_id and entry.get('author') == author:
+        if entry.get('record_id') == record_id and entry.get('author') == author and entry.get('message_type') == message_type:
             return True
     return False
 
-def mark_submission_processed(record_id, author, title, tracking_data):
+def mark_submission_processed(record_id, author, title, tracking_data, message_type):
     """Mark a submission as processed."""
     entry = {
         'record_id': record_id,
         'author': author,
         'title': title,
-        'processed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        'processed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'message_type': message_type
     }
     
     if 'processed' not in tracking_data:
@@ -792,7 +793,8 @@ def extract_supervisor_usernames(supervisors, mattermost_config=None):
         'quiroga-trivino': 'aquiroga',
         'van tonder': 'rvantond',
         'kieseler': 'jkiesele',
-        'de pietro': 'gdepietro'
+        'de pietro': 'gdepietro',
+        'trevisani': 'ntrevisa',
     }
     
     for supervisor in supervisors:
@@ -907,8 +909,8 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
     api_url = mattermost_config['api_url']
     token = mattermost_config['token']
     
-    # Load tracking data to check for already processed submissions
     tracking_data = load_processed_submissions()
+    # Load tracking data to check for already processed submissions      "message_type": "supervisor_notification",
     
     # Test connection
     success, bot_user = test_mattermost_connection(api_url, token)
@@ -927,12 +929,13 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
     
     for submission in submissions:
         print(f"\n--- Processing: {submission['title'][:50]}... ---")
-        
-        # Check if this submission has already been processed
-        if is_submission_processed(submission['record_id'], submission['author'], tracking_data):
-            print(f"⏭ Skipping - already processed (notifications already sent)")
-            continue
-        
+
+        author_parts = submission['author'].split(',')
+        if len(author_parts) == 2:
+            author_display = f"{author_parts[1].strip()} {author_parts[0].strip()}"
+        else:
+            author_display = submission['author']
+
         # Check if this is a Bachelor Thesis
         thesis_type = submission['thesis_type'].lower()
         is_bachelor = 'bachelor' in thesis_type
@@ -941,163 +944,279 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
         if not (is_bachelor or is_master):
             print(f"⏭ Skipping Mattermost notification (not a Bachelor thesis or Master thesis: {submission['thesis_type']})")
             continue
-        
-        print(f"✓ Bachelor thesis detected, preparing notification...")
-        
+
+        print(f"✓ Bachelor/Master thesis detected, preparing notification...")
+
+        # Check if this submission has already been processed
+        if is_submission_processed(submission['record_id'], submission['author'], tracking_data, "supervisor_notification"):
+            print(f"⏭ Skipping - supervisor notification already sent for this submission")
+            supervisors_notified = True
+        else:
+            supervisors_notified = False
+
+        if is_submission_processed(submission['record_id'], submission['author'], tracking_data, "author_permission"):
+            print(f"⏭ Skipping - author permission request already sent for this submission")
+            author_contacted = True
+        else:
+            author_contacted = False
+
         # Prepare notification recipients (supervisors + webadmin only)
         recipients = [WEBADMIN_USERNAME]  # Always notify webadmin
         
-        # Add supervisors if available
-        if submission['supervisors']:
-            try:
-                supervisor_usernames = extract_supervisor_usernames(
-                    submission['supervisors'], 
-                    mattermost_config
-                )
-                recipients.extend(supervisor_usernames)
-            except ValueError as e:
-                print(f"\n⚠️  WARNING: Could not resolve all supervisor usernames")
-                print(f"    {str(e)}")
-                print(f"    Skipping Mattermost notification for this submission.")
-                print(f"    Email notification was still sent.\n")
-                continue
-        
-        # Remove duplicates
-        recipients = list(set(recipients))
-        
-        print(f"Recipients: {', '.join(recipients)}")
-        
-        # Format author name (convert "Last, First" to "First Last")
-        author_parts = submission['author'].split(',')
-        if len(author_parts) == 2:
-            author_display = f"{author_parts[1].strip()} {author_parts[0].strip()}"
-        else:
-            author_display = submission['author']
-        
-        # Format the message
-        message = f"Hi,\n{author_display} has submitted their thesis into publish.\n\n"
-        message += f"**Title**: {submission['title']}\n"
-        message += f"**Author**: {submission['author']}\n"
-        message += f"**Type**: {submission['thesis_type']}\n\n"
-        message += f"Can this be uploaded to publish with open access rights?\n"
-        message += f"If this isn't possible, please contact the author directly to clarify.\n"
-        message += f"Also, if some supervisors are missing from this notification, please inform @{WEBADMIN_USERNAME}.\n\n"
-        message += f"Cheers,\nETPApprover Bot for the Webbadmin"
-        
-        # Interactive mode - show preview and ask for confirmation
-        if interactive:
-            print("\n" + "=" * 60)
-            print("SUPERVISOR NOTIFICATION PREVIEW")
-            print("=" * 60)
-            print(f"To: {', '.join(recipients)}")
-            print("-" * 60)
-            print(message)
-            print("=" * 60)
-            
-            confirm = input("\n📤 Send this notification to supervisors? (y/n/skip): ").strip().lower()
-            
-            if confirm == 'skip':
-                print("⏭  Skipping supervisor notification for this thesis")
-                continue
-            elif confirm not in ['y', 'yes']:
-                print("❌ Notification cancelled")
-                continue
-            
-            print("✓ Sending supervisor notification...")
-        
-        # Send as group DM if multiple recipients, otherwise individual DM
-        if len(recipients) > 1:
-            print(f"Sending group DM to {len(recipients)} recipients...")
-            success = send_group_dm(api_url, token, bot_id, recipients, message)
-        else:
-            print(f"Sending DM to {recipients[0]}...")
-            success = send_dm_to_user(api_url, token, bot_id, recipients[0], message)
-        
-        if success:
-            print(f"✓ Notification sent successfully")
-        else:
-            print(f"✗ Failed to send notification")
-        
-        # Send separate message to author asking for permission
-        print(f"\n--- Contacting author for permission ---")
-        author_username = extract_author_username(submission['author'], mattermost_config)
-        
-        if author_username:
-            # Create group DM with author and jhornung
-            author_recipients = [WEBADMIN_USERNAME, author_username]
-            
-            # Remove duplicates (in case author is already jhornung)
-            author_recipients = list(set(author_recipients))
-            
-            # Extract first name for more personal greeting
+        if supervisors_notified == False:
+                # Add supervisors if available
+            if submission['supervisors']:
+                try:
+                    supervisor_usernames = extract_supervisor_usernames(
+                        submission['supervisors'], 
+                        mattermost_config
+                    )
+                    recipients.extend(supervisor_usernames)
+                except ValueError as e:
+                    print(f"\n⚠️  WARNING: Could not resolve all supervisor usernames")
+                    print(f"    {str(e)}")
+                    print(f"    Skipping Mattermost notification for this submission.")
+                    print(f"    Email notification was still sent.\n")
+                    continue
+                
+            # Remove duplicates
+            recipients = list(set(recipients))
+
+            print(f"Recipients: {', '.join(recipients)}")
+
+            # Format author name (convert "Last, First" to "First Last")
             author_parts = submission['author'].split(',')
             if len(author_parts) == 2:
-                # Format is "Lastname, Firstname" - use firstname
-                author_firstname = author_parts[1].strip().split()[0]  # Get first part of firstname
+                author_display = f"{author_parts[1].strip()} {author_parts[0].strip()}"
             else:
-                # Fallback to full display name
-                author_firstname = author_display.split()[0]
-            
-            # Format author's permission request message
-            author_message = f"Hi {author_firstname},\n\n"
-            author_message += f"Your thesis **\"{submission['title']}\"** has been submitted to our repository. Congratulations for handing in :partyparrot:\n\n"
-            author_message += f"We would like to confirm: Do you give permission to publish this thesis with **open access rights**? "
-            author_message += f"This means your thesis will be publicly accessible online.\n\n"
-            author_message += f"Please reply with your confirmation.\n\n"
-            author_message += f"Cheers,\nETPApprover Bot for the Webbadmin"
-            
-            print(f"Author recipients: {', '.join(author_recipients)}")
-            
-            # Interactive mode - show author message preview
+                author_display = submission['author']
+
+            # Format the message
+            message = f"Hi,\n{author_display} has submitted their thesis into publish.\n\n"
+            message += f"**Title**: {submission['title']}\n"
+            message += f"**Author**: {submission['author']}\n"
+            message += f"**Type**: {submission['thesis_type']}\n\n"
+            message += f"Can this be uploaded to publish with open access rights?\n"
+            message += f"If this isn't possible, please contact the author directly to clarify.\n"
+            message += f"Also, if some supervisors are missing from this notification, please inform @{WEBADMIN_USERNAME}.\n\n"
+            message += f"Cheers,\nETPApprover Bot for the Webbadmin"
+
+            # Interactive mode - show preview and ask for confirmation
             if interactive:
                 print("\n" + "=" * 60)
-                print("AUTHOR PERMISSION REQUEST PREVIEW")
+                print("SUPERVISOR NOTIFICATION PREVIEW")
                 print("=" * 60)
-                print(f"To: {', '.join(author_recipients)}")
+                print(f"To: {', '.join(recipients)}")
                 print("-" * 60)
-                print(author_message)
+                print(message)
                 print("=" * 60)
-                
-                confirm = input("\n📤 Send this permission request to author? (y/n/skip): ").strip().lower()
-                
+
+                confirm = input("\n📤 Send this notification to supervisors? (y/n/skip): ").strip().lower()
+
                 if confirm == 'skip':
-                    print("⏭  Skipping author permission request")
-                    continue
+                    print("⏭  Skipping supervisor notification for this thesis")
                 elif confirm not in ['y', 'yes']:
-                    print("❌ Author notification cancelled")
+                    print("❌ Notification cancelled")
+                elif confirm in ['y', 'yes']:
+                    print("✓ Sending supervisor notification...")
+                continue
+
+            # Send as group DM if multiple recipients, otherwise individual DM
+            if len(recipients) > 1:
+                print(f"Sending group DM to {len(recipients)} recipients...")
+                success = send_group_dm(api_url, token, bot_id, recipients, message)
+            else:
+                print(f"Sending DM to {recipients[0]}...")
+                success = send_dm_to_user(api_url, token, bot_id, recipients[0], message)
+
+            if success:
+                print(f"✓ Notification sent successfully")
+            else:
+                print(f"✗ Failed to send notification")
+
+            tracking_data = mark_submission_processed(
+                submission['record_id'],
+                submission['author'],
+                submission['title'],
+                tracking_data,
+                notification_type="supervisor_notification"
+            )
+            save_processed_submissions(tracking_data)
+
+        if author_contacted == False:
+            # Send separate message to author asking for permission
+            print(f"\n--- Contacting author for permission ---")
+            author_username = extract_author_username(submission['author'], mattermost_config)
+
+            if author_username:
+                # Create group DM with author and jhornung
+                author_recipients = [WEBADMIN_USERNAME, author_username]
+
+                # Remove duplicates (in case author is already jhornung)
+                author_recipients = list(set(author_recipients))
+
+                # Extract first name for more personal greeting
+                author_parts = submission['author'].split(',')
+                if len(author_parts) == 2:
+                    # Format is "Lastname, Firstname" - use firstname
+                    author_firstname = author_parts[1].strip().split()[0]  # Get first part of firstname
+                else:
+                    # Fallback to full display name
+                    author_firstname = author_display.split()[0]
+
+                # Format author's permission request message
+                author_message = f"Hi {author_firstname},\n\n"
+                author_message += f"Your thesis **\"{submission['title']}\"** has been submitted to our repository. Congratulations for handing in :partyparrot:\n\n"
+                author_message += f"We would like to confirm: Do you give permission to publish this thesis with **open access rights**? "
+                author_message += f"This means your thesis will be publicly accessible online.\n\n"
+                author_message += f"Please reply with your confirmation.\n\n"
+                author_message += f"Cheers,\nETPApprover Bot for the Webbadmin"
+
+                print(f"Author recipients: {', '.join(author_recipients)}")
+
+                # Interactive mode - show author message preview
+                if interactive:
+                    print("\n" + "=" * 60)
+                    print("AUTHOR PERMISSION REQUEST PREVIEW")
+                    print("=" * 60)
+                    print(f"To: {', '.join(author_recipients)}")
+                    print("-" * 60)
+                    print(author_message)
+                    print("=" * 60)
+
+                    confirm = input("\n📤 Send this permission request to author? (y/n/skip): ").strip().lower()
+
+                    if confirm == 'skip':
+                        print("⏭  Skipping author permission request")
+                    elif confirm not in ['y', 'yes']:
+                        print("❌ Author notification cancelled")
+                    elif confirm in ['y', 'yes']:
+                        print("✓ Sending author permission request...")
                     continue
-                
+
                 print("✓ Sending author permission request...")
-            
-            # Send as group DM if author is not jhornung, otherwise just notify jhornung
-            if len(author_recipients) > 1:
-                print(f"Sending permission request to author (with jhornung in DM)...")
-                author_success = send_group_dm(api_url, token, bot_id, author_recipients, author_message)
+
+                # Send as group DM if author is not jhornung, otherwise just notify jhornung
+                if len(author_recipients) > 1:
+                    print(f"Sending permission request to author (with jhornung in DM)...")
+                    author_success = send_group_dm(api_url, token, bot_id, author_recipients, author_message)
+                else:
+                    # Author is jhornung, just send a note
+                    print(f"Author is jhornung, sending self-notification...")
+                    author_success = send_dm_to_user(api_url, token, bot_id, WEBADMIN_USERNAME, 
+                        f"Note: You are the author of \"{submission['title']}\" - permission request skipped.")
+
+                if author_success:
+                    print(f"✓ Author permission request sent successfully")
+                else:
+                    print(f"✗ Failed to send author permission request")
             else:
-                # Author is jhornung, just send a note
-                print(f"Author is jhornung, sending self-notification...")
-                author_success = send_dm_to_user(api_url, token, bot_id, WEBADMIN_USERNAME, 
-                    f"Note: You are the author of \"{submission['title']}\" - permission request skipped.")
+                print(f"⚠️  Could not find Mattermost username for author: {submission['author']}")
+                print(f"    Skipping author permission request.")
+
+            # Mark this submission as processed
+            print(f"\n✓ Marking submission as processed...")
+            tracking_data = mark_submission_processed(
+                submission['record_id'],
+                submission['author'],
+                submission['title'],
+                tracking_data,
+                notification_type="author_permission"
+            )
+            save_processed_submissions(tracking_data)
+
+        if any("ferber" in s.lower() for s in submission['supervisors']):
+            processed_date = None
+
+            for record in tracking_data.get('processed', []):
+                if (record['record_id'] == submission['record_id'] and
+                    record['author'] == submission['author']):
+                        processed_at_string = record.get('processed_at')
+                        if processed_at_string:
+                            processed_date = datetime.strptime(processed_at_string, '%Y-%m-%d %H:%M:%S')
+                        break
             
-            if author_success:
-                print(f"✓ Author permission request sent successfully")
-            else:
-                print(f"✗ Failed to send author permission request")
-        else:
-            print(f"⚠️  Could not find Mattermost username for author: {submission['author']}")
-            print(f"    Skipping author permission request.")
-        
-        # Mark this submission as processed
-        print(f"\n✓ Marking submission as processed...")
-        tracking_data = mark_submission_processed(
-            submission['record_id'],
-            submission['author'],
-            submission['title'],
-            tracking_data
-        )
-        save_processed_submissions(tracking_data)
-    
+            if processed_date is not None:
+                print(f"✓ Found processed date for submission: {processed_date.date()}")
+                days_since_processed = (datetime.now() - processed_date).days
+                print(f"  Days since last reminder: {days_since_processed} days")
+                if days_since_processed % 14 == 0:
+                    if submission['supervisors']:
+                        try:
+                            supervisor_usernames = extract_supervisor_usernames(
+                                submission['supervisors'], 
+                                mattermost_config
+                            )
+                            recipients.extend(supervisor_usernames)
+                        except ValueError as e:
+                            print(f"\n⚠️  WARNING: Could not resolve all supervisor usernames")
+                            print(f"    {str(e)}")
+                            print(f"    Skipping Mattermost notification for this submission.")
+                            print(f"    Email notification was still sent.\n")
+                            continue
+                    # Remove duplicates
+                    recipients = list(set(recipients)) 
+                    print(f"\n🔔 Sending reminder notification to supervisors...")
+
+                    message = f"Hi,\n\nThis is a reminder that {author_display}'s thesis submission titled **{submission['title']}** is still pending approval for open access publication.\n\n"
+                    message += f"Is the final grade available yet?\n\n"
+                    message += f"Cheers,\nETPApprover Bot for the Webbadmin"
+
+                    if interactive:
+                        print("\n" + "=" * 60)
+                        print("REMINDER NOTIFICATION PREVIEW")
+                        print("=" * 60)
+                        print(f"To: {', '.join(recipients)}")
+                        print("-" * 60)
+                        print(message)
+                        print("=" * 60)
+
+                        confirm = input("\n📤 Send this reminder notification to supervisors? (y/n/skip): ").strip().lower()
+
+                        if confirm == 'skip':
+                            print("⏭  Skipping reminder notification for this thesis")
+                        elif confirm not in ['y', 'yes']:
+                            print("❌ Reminder notification cancelled")
+                        elif confirm in ['y', 'yes']:
+                            print("✓ Sending reminder notification...")
+                        continue
+
+                    # Send as group DM if multiple recipients, otherwise individual DM
+                    if len(recipients) > 1:
+                        print(f"Sending group DM to {len(recipients)} recipients...")
+                        success = send_group_dm(api_url, token, bot_id, recipients, message)
+                    else:
+                        print(f"Sending DM to {recipients[0]}...")
+                        success = send_dm_to_user(api_url, token, bot_id, recipients[0], message)
+
+                    if success:
+                        print(f"✓ Reminder notification sent successfully")
+
+                        # Mark this submission as processed
+                        print(f"\n✓ Marking submission as reprocessed...")
+                        update_supervisor_processed_date(
+                            submission['record_id'],
+                            submission['author'],
+                            tracking_data,
+                            new_date_str=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        )
+                    else:
+                        print(f"✗ Failed to send reminder notification")
+
     return True
+
+def update_supervisor_processed_date(record_id, author, tracking_data, new_date_str):
+    """Update the processed_at date for the supervisor notification of a submission."""
+    for entry in tracking_data.get('processed', []):
+        if (
+            entry.get('record_id') == record_id and
+            entry.get('author') == author and
+            entry.get('message_type') == "supervisor_notification"
+        ):
+            entry['processed_at'] = new_date_str
+            break
+    save_processed_submissions(tracking_data)
+
 
 def run_scraper(capture_log=False, interactive=False):
     """Run the thesis scraper and send notifications.

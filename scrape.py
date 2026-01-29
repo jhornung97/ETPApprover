@@ -16,6 +16,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 from io import StringIO
 from datetime import datetime
+import numpy as np
 
 # Disable SSL warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -1125,12 +1126,15 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
             )
             save_processed_submissions(tracking_data)
 
-        if any("ferber" in s.lower() for s in submission['supervisors']):
+        if any("ferber" in s.lower() for s in submission['supervisors']) and supervisors_notified:
+            print(f"\n--- Checking for reminder notification to supervisors ---")
             processed_date = None
 
             for record in tracking_data.get('processed', []):
                 if (record['record_id'] == submission['record_id'] and
-                    record['author'] == submission['author']):
+                    record['author'] == submission['author'] and
+                    record['message_type'] == "supervisor_notification" and
+                    record['approval_given'] == "False"):
                         processed_at_string = record.get('processed_at')
                         if processed_at_string:
                             processed_date = datetime.strptime(processed_at_string, '%Y-%m-%d %H:%M:%S')
@@ -1140,8 +1144,8 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
                 print(f"✓ Found processed date for submission: {processed_date.date()}")
                 days_since_processed = (datetime.now().date() - processed_date.date()).days
                 print(f"  Days since last reminder: {days_since_processed} days")
-                if days_since_processed == 0:
-                    print(f"⏭ No reminder needed today (just processed)")
+                if days_since_processed == 0 or days_since_processed % 14 != 0:
+                    print(f"⏭ No reminder needed today")
                 if days_since_processed % 14 == 0 and days_since_processed != 0:
                     print(f"⏰ Time to send a reminder notification to supervisors...")
                     if submission['supervisors']:
@@ -1205,6 +1209,95 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
                         )
                     else:
                         print(f"✗ Failed to send reminder notification")
+
+    for record in tracking_data.get('processed', []):
+        if record['message_type'] == "author_permission":
+            print(f"\n--- Checking for author permission follow-up ---")
+            processed_date = None
+            n_reminders_sent = None
+            print(f"Checking record ID: {record['record_id']} for author permission follow-up...")
+            if (record['approval_given'] == "False"):
+                processed_at_string = record.get('processed_at')
+                n_reminders_sent = int(record.get('n_reminders_sent', 0))
+                if processed_at_string:
+                    processed_date = datetime.strptime(processed_at_string, '%Y-%m-%d %H:%M:%S')
+            else:
+                print(f"⏭ Skipping record (author permission already given)")
+                continue
+
+            if processed_date is not None and n_reminders_sent is not None:
+                print(f"✓ Found processed date for submission: {processed_date.date()}")
+                days_since_processed = (datetime.now().date() - processed_date.date()).days
+                print(f"  Days since last reminder: {days_since_processed} days")
+                
+                threshold_days = np.ceil(14 * np.exp(-n_reminders_sent/2.5)) 
+                print(f"  Current threshold for next reminder: {threshold_days} days (reminders sent: {n_reminders_sent})")
+                
+                if days_since_processed >= threshold_days:
+                    print(f"⏰ Time to send a follow-up permission request to author...")
+                    author_username = extract_author_username(record['author'], mattermost_config)
+                    
+                    if author_username:
+                        # Create group DM with author and jhornung
+                        author_recipients = [WEBADMIN_USERNAME, author_username]
+                        # Remove duplicates (in case author is already jhornung)
+                        author_recipients = list(set(author_recipients))
+                        
+                        # Extract first name for more personal greeting
+                        author_parts = record['author'].split(',')
+                        if len(author_parts) == 2:
+                            # Format is "Lastname, Firstname" - use firstname
+                            print(f"Extracting firstname from author parts: {author_parts}")
+                            author_firstname = author_parts[1].strip().split()[0]  # Get first part of firstname
+                        else:
+                            # Fallback to full display name
+                            print(f"Using full author display for firstname extraction: {author_parts}")
+                            author_firstname = author_parts[0].strip().split()[0]
+                        
+                        # Format author's permission request message
+                        author_message = f"Hi {author_firstname},\n\n"
+                        author_message += f"This is a friendly reminder regarding your thesis submission **\"{record['title']}\"**.\n"
+                        author_message += f"We are still awaiting your confirmation to publish it with **open access rights**" + "!" * (n_reminders_sent + 1) + "\n\n"
+                        author_message += f"Please reply with your confirmation at your earliest convenience.\n\n"
+                        author_message += f"Cheers,\nETPApprover Bot for the Webbadmin"
+                        print(f"Author recipients: {', '.join(author_recipients)}")
+                        
+                        # Interactive mode - show author message preview
+                        if interactive:
+                            print("\n" + "=" * 60)
+                            print("AUTHOR FOLLOW-UP PERMISSION REQUEST PREVIEW")
+                            print("=" * 60)
+                            print(f"To: {', '.join(author_recipients)}")
+                            print("-" * 60)
+                            print(author_message)
+                            print("=" * 60)
+                            confirm = input("\n📤 Send this follow-up permission request to author? (y/n/skip): ").strip().lower()
+                            if confirm == 'skip':
+                                print("⏭  Skipping follow-up permission request")
+                            elif confirm not in ['y', 'yes']:
+                                print("❌ Author follow-up notification cancelled")
+                            elif confirm in ['y', 'yes']:
+                                print("✓ Sending follow-up permission request...")
+                            continue
+                        print("✓ Sending follow-up permission request to author...")
+                        
+                        # Send as group DM if author is not jhornung, otherwise just notify jhornung
+                        if len(author_recipients) > 1:
+                            print(f"Sending permission request to author (with jhornung in DM)...")
+                            author_success = send_group_dm(api_url, token, bot_id, author_recipients, author_message)
+                        else:
+                            # Author is jhornung, just send a note
+                            print(f"Author is jhornung, sending self-notification...")
+                            author_success = send_dm_to_user(api_url, token, bot_id, WEBADMIN_USERNAME, 
+                                f"Note: You are the author of \"{submission['title']}\" - permission request skipped.")
+                        if author_success:
+                            print(f"✓ Follow-up permission request sent successfully")
+                            # Update tracking data
+                            record['processed_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            record['n_reminders_sent'] = str(n_reminders_sent + 1)
+                            save_processed_submissions(tracking_data)
+
+
 
     return True
 

@@ -92,7 +92,8 @@ def mark_submission_processed(record_id, author, title, tracking_data, message_t
         'author': author,
         'title': title,
         'processed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'message_type': message_type
+        'message_type': message_type,
+        'approval_given': 'False'
     }
     
     if 'processed' not in tracking_data:
@@ -796,6 +797,7 @@ def extract_supervisor_usernames(supervisors, mattermost_config=None):
         'kieseler': 'jkiesele',
         'de pietro': 'gdepietro',
         'trevisani': 'ntrevisa',
+        'regnery': 'brendan.regnery',
     }
     
     for supervisor in supervisors:
@@ -1040,7 +1042,7 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
                 submission['author'],
                 submission['title'],
                 tracking_data,
-                notification_type="supervisor_notification"
+                message_type="supervisor_notification"
             )
             save_processed_submissions(tracking_data)
 
@@ -1122,7 +1124,7 @@ def send_mattermost_notifications(submissions, mattermost_config, interactive=Fa
                 submission['author'],
                 submission['title'],
                 tracking_data,
-                notification_type="author_permission"
+                message_type="author_permission"
             )
             save_processed_submissions(tracking_data)
 

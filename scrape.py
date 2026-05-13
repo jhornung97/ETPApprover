@@ -178,6 +178,9 @@ def get_pending_submissions(session, api_url):
         elif isinstance(data, dict) and 'hits' in data:
             all_submissions = data['hits'].get('hits', [])
 
+        print("Checking for weird and unexpected approval statuses:")
+        print([sub.get('approval_status') for sub in all_submissions])
+
         pending_submissions = [
             sub for sub in all_submissions 
             if sub.get('approval_status') == 'pending'
@@ -799,6 +802,11 @@ def extract_supervisor_usernames(supervisors, mattermost_config=None):
         'trevisani': 'ntrevisa',
         'regnery': 'brendan.regnery',
     }
+
+    # External persons (from other institutes) who have no Mattermost account — skip silently
+    external_persons = [
+        'streit',  # Achim Streit, KIT SCC — external coreferee
+    ]
     
     for supervisor in supervisors:
         supervisor = supervisor.strip()
@@ -826,7 +834,12 @@ def extract_supervisor_usernames(supervisors, mattermost_config=None):
         
         if found_override:
             continue
-        
+
+        # Check if this person is a known external (no Mattermost account) — skip gracefully
+        if any(ext in lastname_lower for ext in external_persons):
+            print(f"    ⏭ Skipping external person (no Mattermost account): {supervisor}")
+            continue
+
         # Generate username variants
         variants = generate_username_variants(supervisor)
         print(f"    💡 Generated variants: {', '.join(variants)}")
